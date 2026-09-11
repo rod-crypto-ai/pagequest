@@ -1,12 +1,17 @@
 import { z } from "zod";
 
-export const questionSchema = z.object({
+const questionFields = {
   id: z.string().min(1), prompt: z.string().min(8).max(500),
   choices: z.tuple([z.string().min(1), z.string().min(1), z.string().min(1), z.string().min(1)]),
   correctIndex: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
   skill: z.enum(["recall", "sequence", "character", "setting", "cause_effect", "main_idea", "inference", "vocabulary"]),
-  rationale: z.string().min(1).max(500), sourceReference: z.string().min(1), confidence: z.number().min(0).max(1), visual: z.boolean().optional(),
-}).superRefine((question, context) => {
+  rationale: z.string().min(1).max(500), sourceReference: z.string().min(1), confidence: z.number().min(0).max(1),
+} as const;
+
+export const generatedQuestionSchema = z.object(questionFields).superRefine((question, context) => {
+  if (new Set(question.choices.map((choice) => choice.trim().toLowerCase())).size !== 4) context.addIssue({ code: z.ZodIssueCode.custom, path: ["choices"], message: "Answer choices must be unique" });
+});
+export const questionSchema = z.object({ ...questionFields, visual: z.boolean().optional() }).superRefine((question, context) => {
   if (new Set(question.choices.map((choice) => choice.trim().toLowerCase())).size !== 4) context.addIssue({ code: z.ZodIssueCode.custom, path: ["choices"], message: "Answer choices must be unique" });
 });
 export const quizSchema = z.object({

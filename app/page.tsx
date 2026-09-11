@@ -8,8 +8,9 @@ import { Progress } from "@/components/ui/progress";
 import { calculatePoints } from "@/lib/scoring.mjs";
 import { demoBooks, demoQuestions } from "@/lib/demo-data";
 import type { BookSearchResult } from "@/lib/books";
+import type { Quiz } from "@/lib/validation/quiz";
 
-type Screen = "home" | "books" | "quiz" | "results" | "adult";
+type Screen = "home" | "books" | "create" | "quiz" | "results" | "adult";
 type DisplayBook = {
   id: string;
   title: string;
@@ -35,6 +36,13 @@ export default function HomePage() {
   const [liveBooks, setLiveBooks] = useState<DisplayBook[] | null>(null);
   const [searchState, setSearchState] = useState<"idle" | "loading" | "error">("idle");
   const [searchMessage, setSearchMessage] = useState("");
+  const [selectedBook, setSelectedBook] = useState<DisplayBook | null>(null);
+  const [generatedQuiz, setGeneratedQuiz] = useState<Quiz | null>(null);
+  const [sourceText, setSourceText] = useState("");
+  const [gradeBand, setGradeBand] = useState<Quiz["gradeBand"]>("3-5");
+  const [testDraft, setTestDraft] = useState(false);
+  const [generationState, setGenerationState] = useState<"idle" | "loading" | "error">("idle");
+  const [generationMessage, setGenerationMessage] = useState("");
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [answers, setAnswers] = useState<number[]>([]);
@@ -44,17 +52,19 @@ export default function HomePage() {
     const value = query.trim().toLowerCase();
     return value ? demoBooks.filter((book) => [book.title, book.author, book.isbn13, book.genre].join(" ").toLowerCase().includes(value)) : [...demoBooks];
   }, [liveBooks, query]);
-  const correctCount = answers.reduce((count, answer, index) => count + (answer === demoQuestions[index]?.correctIndex ? 1 : 0), 0);
-  const scorePercent = Math.round((correctCount / demoQuestions.length) * 100);
+  const activeQuestions = generatedQuiz?.questions ?? demoQuestions;
+  const activeBookTitle = generatedQuiz?.book.title ?? "The Moonlit Map";
+  const correctCount = answers.reduce((count, answer, index) => count + (answer === activeQuestions[index]?.correctIndex ? 1 : 0), 0);
+  const scorePercent = Math.round((correctCount / activeQuestions.length) * 100);
   const earnedPoints = calculatePoints({ basePoints: 5, scorePercent, passingScore: 70 });
-  const question = demoQuestions[questionIndex];
+  const question = activeQuestions[questionIndex];
 
   function goTo(next: Screen) { setScreen(next); window.scrollTo({ top: 0, behavior: "smooth" }); }
   function startQuiz() { setQuestionIndex(0); setSelected(null); setAnswers([]); goTo("quiz"); }
   function advanceQuiz() {
     if (selected === null) return;
     setAnswers((current) => [...current, selected]); setSelected(null);
-    if (questionIndex === demoQuestions.length - 1) goTo("results"); else setQuestionIndex((current) => current + 1);
+    if (questionIndex === activeQuestions.length - 1) goTo("results"); else setQuestionIndex((current) => current + 1);
   }
   function readQuestion() {
     if (!("speechSynthesis" in window)) return;
@@ -97,6 +107,43 @@ export default function HomePage() {
     }
   }
 
+  function beginQuizDraft(book: DisplayBook) {
+    setSelectedBook(book);
+    setGeneratedQuiz(null);
+    setApproved(false);
+    setGenerationState("idle");
+    setGenerationMessage("");
+    setSourceText("");
+    goTo("create");
+  }
+
+  async function generateQuiz(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedBook) return;
+    setGenerationState("loading");
+    setGenerationMessage("");
+    try {
+      const response = await fetch("/api/quizzes/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          book: { title: selectedBook.title, author: selectedBook.author, isbn13: selectedBook.isbn13 },
+          gradeBand,
+          sourceText,
+          testDraft,
+        }),
+      });
+      const payload = await response.json() as { quiz?: Quiz; error?: string };
+      if (!response.ok || !payload.quiz) throw new Error(payload.error ?? "Quiz generation failed.");
+      setGeneratedQuiz(payload.quiz);
+      setGenerationState("idle");
+      if (testDraft) startQuiz(); else goTo("adult");
+    } catch (error) {
+      setGenerationState("error");
+      setGenerationMessage(error instanceof Error ? error.message : "Quiz generation failed.");
+    }
+  }
+
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Main navigation">
       <button className="brand" onClick={() => goTo("home")}><span className="brand-mark"><BookOpen /></span><span>PageQuest</span></button>
@@ -117,29 +164,42 @@ export default function HomePage() {
         <div className="result-summary"><p className="result-count" aria-live="polite">{searchState === "loading" ? "Searching two trusted book catalogs…" : `${filteredBooks.length} ${filteredBooks.length === 1 ? "book" : "books"} found`}</p>{liveBooks && <button onClick={() => { setLiveBooks(null); setQuery(""); setSearchMessage(""); }}>Clear search</button>}</div>
         {searchMessage && <p className={`search-message ${searchState === "error" ? "error" : ""}`} role={searchState === "error" ? "alert" : "status"}>{searchMessage}</p>}
         {searchState === "loading" && <div className="search-loading" aria-hidden="true">{[1, 2, 3, 4].map((item) => <div className="book-skeleton" key={item}><span /><b /><i /></div>)}</div>}
-        {searchState !== "loading" && <div className="catalog-grid">{filteredBooks.map((book) => <BookTile key={book.id} book={book} onOpen={book.quizReady ? startQuiz : undefined} />)}</div>}
+        {searchState !== "loading" && <div className="catalog-grid">{filteredBooks.map((book) => <BookTile key={book.id} book={book} onOpen={book.quizReady ? startQuiz : undefined} onCreate={!book.quizReady ? () => beginQuizDraft(book) : undefined} />)}</div>}
         {searchState !== "loading" && filteredBooks.length === 0 && <div className="empty-state"><BookOpen /><h2>No books found</h2><p>Check the spelling, try the author’s name, or enter the ISBN.</p></div>}
       </section>}
 
+      {screen === "create" && selectedBook && <section className="screen create-shell" aria-labelledby="create-title">
+        <button className="back-link" onClick={() => goTo("books")}>← Back to books</button>
+        <div className="create-heading"><div><span className="eyebrow"><ShieldCheck /> Adult workspace</span><h1 id="create-title">Create a quiz draft</h1><p>Paste notes that explain the complete story. PageQuest will not rely on catalog details or its own memory of the book.</p></div><div className="selected-book-chip"><strong>{selectedBook.title}</strong><span>{selectedBook.author}</span></div></div>
+        <form className="source-form" onSubmit={generateQuiz}>
+          <label><span>Reading range</span><select value={gradeBand} onChange={(event) => setGradeBand(event.target.value as Quiz["gradeBand"])}><option value="1-2">Grades 1–2</option><option value="3-5">Grades 3–5</option><option value="6-8">Grades 6–8</option></select></label>
+          <label><span>Teacher or parent notes</span><small>Include characters, setting, major events in order, causes and effects, and the ending. Minimum 600 characters.</small><textarea value={sourceText} onChange={(event) => setSourceText(event.target.value)} rows={14} maxLength={20000} placeholder="Paragraph 1: Introduce the characters and setting…\n\nParagraph 2: Explain the first major event…" /></label>
+          <div className="source-meter"><span>{sourceText.length.toLocaleString()} / 20,000 characters</span><strong className={sourceText.length >= 600 ? "ready" : ""}>{sourceText.length >= 600 ? "Ready to generate" : `${600 - sourceText.length} more needed`}</strong></div>
+          {process.env.NODE_ENV !== "production" && <label className="test-toggle"><input type="checkbox" checked={testDraft} onChange={(event) => setTestDraft(event.target.checked)} /><span><strong>Test this draft without approval</strong><small>Local development only. This option cannot run in production.</small></span></label>}
+          {generationMessage && <p className="search-message error" role="alert">{generationMessage}</p>}
+          <div className="generation-actions"><Button type="button" variant="outline" onClick={() => goTo("books")}>Cancel</Button><Button type="submit" size="lg" disabled={sourceText.trim().length < 600 || generationState === "loading"}>{generationState === "loading" ? <><LoaderCircle className="spin" /> Building 10 questions…</> : testDraft ? "Generate and test draft" : "Generate for adult review"}</Button></div>
+        </form>
+      </section>}
+
       {screen === "quiz" && question && <section className="screen quiz-shell" aria-labelledby="question-title">
-        <div className="quiz-heading"><div className="mini-book"><Image src="/assets/moonlit-map-cover.webp" width={48} height={64} alt="" /><div><strong>The Moonlit Map</strong><span>Question {questionIndex + 1} of {demoQuestions.length}</span></div></div><Button variant="outline" onClick={() => goTo("books")}>Exit quiz</Button></div>
-        <Progress value={((questionIndex + 1) / demoQuestions.length) * 100} aria-label={`Question ${questionIndex + 1} of ${demoQuestions.length}`} />
+        <div className="quiz-heading"><div className="mini-book">{generatedQuiz ? <span className="mini-cover"><BookOpen /></span> : <Image src="/assets/moonlit-map-cover.webp" width={48} height={64} alt="" />}<div><strong>{activeBookTitle}</strong><span>Question {questionIndex + 1} of {activeQuestions.length}{generatedQuiz && !approved ? " · Test draft" : ""}</span></div></div><Button variant="outline" onClick={() => goTo("books")}>Exit quiz</Button></div>
+        <Progress value={((questionIndex + 1) / activeQuestions.length) * 100} aria-label={`Question ${questionIndex + 1} of ${activeQuestions.length}`} />
         <article className="question-card"><span className="skill-label">{question.skill.replace("_", " ")}</span><h1 id="question-title">{question.prompt}</h1>
-          {question.visual && <figure className="question-visual"><Image src="/assets/sequence-question.webp" width={1400} height={700} alt="Four scenes showing the friends' journey from finding a map to reaching an observatory" /><figcaption>Look closely at what happens in each scene.</figcaption></figure>}
+          {question.visual && !generatedQuiz && <figure className="question-visual"><Image src="/assets/sequence-question.webp" width={1400} height={700} alt="Four scenes showing the friends' journey from finding a map to reaching an observatory" /><figcaption>Look closely at what happens in each scene.</figcaption></figure>}
           <div className="answer-grid">{question.choices.map((choice, index) => <button key={choice} className={`answer-card ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)} aria-pressed={selected === index}><span>{String.fromCharCode(65 + index)}</span>{choice}</button>)}</div>
-          <footer className="quiz-footer"><button className="read-button" onClick={readQuestion}><Volume2 /> Read aloud</button><Button size="lg" disabled={selected === null} onClick={advanceQuiz}>{questionIndex === demoQuestions.length - 1 ? "See my results" : "Next question"}<ChevronRight /></Button></footer>
+          <footer className="quiz-footer"><button className="read-button" onClick={readQuestion}><Volume2 /> Read aloud</button><Button size="lg" disabled={selected === null} onClick={advanceQuiz}>{questionIndex === activeQuestions.length - 1 ? "See my results" : "Next question"}<ChevronRight /></Button></footer>
         </article>
       </section>}
 
       {screen === "results" && <section className="screen results-shell" aria-labelledby="results-title">
         <div className="celebration"><div className="score-ring"><strong>{answers.length ? scorePercent : 80}%</strong></div><h1 id="results-title">Strong reading, Maya!</h1><p>You followed the story and understood its important events.</p></div>
-        <div className="stats-grid"><Stat label="Correct answers" value={answers.length ? `${correctCount} of ${demoQuestions.length}` : "4 of 5"} /><Stat label="Points earned" value={`+${answers.length ? earnedPoints.toFixed(1) : "4.0"}`} /><Stat label="Monthly goal" value="68%" /></div>
+        <div className="stats-grid"><Stat label="Correct answers" value={answers.length ? `${correctCount} of ${activeQuestions.length}` : "4 of 5"} /><Stat label="Points earned" value={`+${answers.length ? earnedPoints.toFixed(1) : "4.0"}`} /><Stat label="Monthly goal" value="68%" /></div>
         <section className="skills-card"><h2>Your reading skills</h2><Skill label="Characters" value={100} /><Skill label="Sequence" value={75} /><Skill label="Inference" value={65} /><div className="result-actions"><Button variant="outline" onClick={() => goTo("home")}>Back home</Button><Button onClick={() => goTo("books")}>Choose another book</Button></div></section>
       </section>}
 
       {screen === "adult" && <section className="screen" aria-labelledby="review-title">
-        <div className="adult-heading"><div><h1 id="review-title">Adult review</h1><p>Generated drafts stay private until an adult approves them.</p></div><Button onClick={() => setApproved(true)} disabled={approved}>{approved ? "Quiz approved" : "Approve quiz"}</Button></div>
-        <div className="adult-grid"><article className="review-card"><div className="review-book"><Image src="/assets/moonlit-map-cover.webp" width={82} height={110} alt="The Moonlit Map cover" /><div><span className={`status-pill ${approved ? "approved" : ""}`}>{approved ? "Approved" : "Needs review"}</span><h2>The Moonlit Map</h2><p>Grades 3–5 · Version 1 · 5 questions</p></div></div>{demoQuestions.slice(0, 2).map((item, index) => <div className="review-question" key={item.id}><header><h3>{index + 1}. {item.prompt}</h3><span>Supported</span></header><p>Correct answer: {item.choices[item.correctIndex]}</p><div><Button variant="outline" size="sm">Edit</Button><Button variant="outline" size="sm">Replace</Button></div></div>)}</article><aside className="quality-card"><div className="confidence"><span>Source confidence</span><strong>94%</strong><small>Teacher-provided chapter notes</small></div><h2>Quality checks</h2><ul><li>Answers supported by source notes</li><li>No copied book passages</li><li>Reading level fits grades 3–5</li><li>No duplicate questions</li><li>Correct answers are evenly placed</li></ul><Button variant="outline" className="full-button" onClick={startQuiz}>Preview as student</Button></aside></div>
+        <div className="adult-heading"><div><h1 id="review-title">Adult review</h1><p>{generatedQuiz ? "Check every answer against your notes before students can use this quiz." : "Generated drafts stay private until an adult approves them."}</p></div><div className="review-actions">{generatedQuiz && <Button variant="outline" onClick={() => goTo("create")}>Revise source</Button>}<Button onClick={() => setApproved(true)} disabled={approved}>{approved ? "Quiz approved" : "Approve quiz"}</Button></div></div>
+        <div className="adult-grid"><article className="review-card"><div className="review-book">{generatedQuiz ? <span className="review-cover"><BookOpen /></span> : <Image src="/assets/moonlit-map-cover.webp" width={82} height={110} alt="The Moonlit Map cover" />}<div><span className={`status-pill ${approved ? "approved" : ""}`}>{approved ? "Approved" : "Needs review"}</span><h2>{activeBookTitle}</h2><p>Grades {(generatedQuiz?.gradeBand ?? "3-5").replace("-", "–")} · Version {generatedQuiz?.version ?? 1} · {activeQuestions.length} questions</p></div></div>{activeQuestions.map((item, index) => <div className="review-question" key={item.id}><header><h3>{index + 1}. {item.prompt}</h3><span>{Math.round(item.confidence * 100)}% source match</span></header><p><strong>Correct answer:</strong> {item.choices[item.correctIndex]}</p><p><strong>Evidence:</strong> {item.sourceReference} · {item.rationale}</p></div>)}</article><aside className="quality-card"><div className="confidence"><span>Average source confidence</span><strong>{Math.round(activeQuestions.reduce((sum, item) => sum + item.confidence, 0) / activeQuestions.length * 100)}%</strong><small>Adult-provided notes</small></div><h2>Approval checklist</h2><ul><li>Every answer matches the notes</li><li>No copied book passages</li><li>Language fits the selected grade</li><li>Distractors are clearly incorrect</li><li>No confusing or duplicate items</li></ul><Button className="full-button" onClick={startQuiz} disabled={generatedQuiz ? !approved : false}>{generatedQuiz && !approved ? "Approve before student use" : "Preview as student"}</Button></aside></div>
       </section>}
     </main>
     <nav className="mobile-nav" aria-label="Mobile navigation">{navigation.map((item) => { const Icon = item.icon; return <button key={item.id} className={screen === item.id ? "active" : ""} onClick={() => goTo(item.id)}><Icon /><span>{item.label.replace("Find a ", "")}</span></button>; })}</nav>
@@ -148,6 +208,6 @@ export default function HomePage() {
 
 function BookArtwork({ cover, title }: { cover: string; title: string }) { return cover.startsWith("/") ? <Image src={cover} fill sizes="180px" alt={`${title} cover`} /> : cover.startsWith("https://") ? <Image src={cover} fill sizes="(max-width: 700px) 45vw, 220px" alt={`${title} cover`} referrerPolicy="no-referrer" /> : <div className={`type-cover ${cover}`}>{title.split(" ").map((word, index) => <span key={`${word}-${index}`}>{word}</span>)}</div>; }
 function BookRow({ book, onOpen }: { book: DisplayBook; onOpen?: () => void }) { return <article className="book-row"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Adult help needed"}</span><h3>{book.title}</h3><p>{book.genre} · Grades {book.gradeBand}</p>{onOpen && <button onClick={onOpen}>Start quiz <ChevronRight /></button>}</div></article>; }
-function BookTile({ book, onOpen }: { book: DisplayBook; onOpen?: () => void }) { return <article className="book-tile"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Quiz not created"}</span><h2>{book.title}</h2><p>{book.author}{book.publishedYear ? ` · ${book.publishedYear}` : ""}</p><small>{book.isbn13 ? `ISBN ${book.isbn13}` : book.source === "open_library" ? "Open Library record" : book.source === "google_books" ? "Google Books record" : book.genre}</small><Button variant={onOpen ? "default" : "outline"} className="full-button" onClick={onOpen}>{onOpen ? "Start quiz" : "Ask an adult"}</Button></article>; }
+function BookTile({ book, onOpen, onCreate }: { book: DisplayBook; onOpen?: () => void; onCreate?: () => void }) { return <article className="book-tile"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Quiz not created"}</span><h2>{book.title}</h2><p>{book.author}{book.publishedYear ? ` · ${book.publishedYear}` : ""}</p><small>{book.isbn13 ? `ISBN ${book.isbn13}` : book.source === "open_library" ? "Open Library record" : book.source === "google_books" ? "Google Books record" : book.genre}</small><Button variant={onOpen ? "default" : "outline"} className="full-button" onClick={onOpen ?? onCreate}>{onOpen ? "Start quiz" : "Create quiz draft"}</Button></article>; }
 function Stat({ label, value }: { label: string; value: string }) { return <div className="stat-card"><span>{label}</span><strong>{value}</strong></div>; }
 function Skill({ label, value }: { label: string; value: number }) { return <div className="skill-row"><strong>{label}</strong><Progress value={value} /><b>{value}%</b></div>; }
