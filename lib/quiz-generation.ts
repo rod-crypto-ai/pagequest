@@ -8,7 +8,6 @@ export const generationRequestSchema = z.object({
     isbn13: z.string().regex(/^\d{13}$/).nullable(),
   }),
   gradeBand: z.enum(["1-2", "3-5", "6-8"]),
-  sourceText: z.string().trim().min(600).max(20_000),
   testDraft: z.boolean().default(false),
 });
 

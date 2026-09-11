@@ -16,7 +16,7 @@ export const questionSchema = z.object({ ...questionFields, visual: z.boolean().
 });
 export const quizSchema = z.object({
   book: z.object({ title: z.string().min(1), author: z.string().min(1), isbn13: z.string().regex(/^\d{13}$/).optional() }),
-  gradeBand: z.enum(["1-2", "3-5", "6-8"]), sourceType: z.enum(["public_domain", "teacher_notes", "authorized_guide", "approved_quiz"]),
+  gradeBand: z.enum(["1-2", "3-5", "6-8"]), sourceType: z.enum(["public_domain", "teacher_notes", "authorized_guide", "open_reference", "approved_quiz"]),
   sourceSufficient: z.literal(true), version: z.number().int().positive(), questions: z.array(questionSchema).min(5).max(15),
 });
 export type Quiz = z.infer<typeof quizSchema>;

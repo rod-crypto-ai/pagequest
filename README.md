@@ -1,6 +1,6 @@
-# PageQuest v0.4 Source-Grounded Quiz Drafts
+# PageQuest v0.4 Automatic Quiz Drafts
 
-PageQuest is a visual reading-comprehension product for students in grades 1–8 and the adults who support them. This release adds source-grounded AI quiz drafts and adult review while preserving real book discovery.
+PageQuest is a visual reading-comprehension product for students in grades 1–8 and the adults who support them. This release automatically finds usable reference material, validates its sufficiency, and builds an AI quiz draft without requiring teacher or parent notes.
 
 ## Included
 
@@ -14,9 +14,10 @@ PageQuest is a visual reading-comprehension product for students in grades 1–8
 - Live title, author, and ISBN search across Open Library and Google Books
 - Provider fallback, result deduplication, loading, empty, and error states
 - Normalized covers, authors, publication years, subjects, and stable identifiers
-- Ten-question drafts generated only from adult-provided source notes
+- Ten-question drafts generated from automatically retrieved Open Library, Google Books, and Wikipedia reference material
 - Strict structured-output validation and source-sufficiency rejection
-- Adult approval gate plus a local-development-only test bypass
+- Automatic refusal when trustworthy source coverage is insufficient
+- Adult approval gate plus an automatic local-development test path
 
 ## Local setup
 
@@ -54,7 +55,7 @@ Then set `GOOGLE_BOOKS_API_KEY` in `.env.local`. Never expose that key in browse
 
 ## Local quiz generation
 
-Set `OPENAI_API_KEY` in `.env.local`. `OPENAI_MODEL` defaults to `gpt-5-mini`. The local development build shows a test-draft option so a developer can take a generated quiz without approving it first.
+Set `OPENAI_API_KEY` in `.env.local`. `OPENAI_MODEL` defaults to `gpt-5-mini`. In local development, selecting **Create quiz draft** automatically finds sources, generates the quiz, and opens it for testing without an approval step. Production still requires adult approval.
 
 Generation is disabled in production unless `QUIZ_GENERATION_ENABLED=true`. Do not enable it publicly until authenticated adult authorization and rate limiting are implemented.
 

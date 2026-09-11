@@ -13,8 +13,8 @@ const question = {
 };
 
 describe("quiz generation boundaries", () => {
-  it("rejects thin source material", () => {
-    const result = generationRequestSchema.safeParse({ book: { title: "Book", author: "Writer", isbn13: null }, gradeBand: "3-5", sourceText: "Short summary", testDraft: true });
+  it("rejects incomplete book identity", () => {
+    const result = generationRequestSchema.safeParse({ book: { title: "", author: "Writer", isbn13: null }, gradeBand: "3-5", testDraft: true });
     expect(result.success).toBe(false);
   });
 

@@ -23,6 +23,7 @@ type DisplayBook = {
   source?: BookSearchResult["source"];
   publishedYear?: number | null;
 };
+type SourceCredit = { name: string; url: string; licenseNote: string };
 const navigation: Array<{ id: Screen; label: string; icon: typeof Home }> = [
   { id: "home", label: "Home", icon: Home },
   { id: "books", label: "Find a book", icon: Search },
@@ -38,11 +39,10 @@ export default function HomePage() {
   const [searchMessage, setSearchMessage] = useState("");
   const [selectedBook, setSelectedBook] = useState<DisplayBook | null>(null);
   const [generatedQuiz, setGeneratedQuiz] = useState<Quiz | null>(null);
-  const [sourceText, setSourceText] = useState("");
-  const [gradeBand, setGradeBand] = useState<Quiz["gradeBand"]>("3-5");
-  const [testDraft, setTestDraft] = useState(false);
+  const gradeBand: Quiz["gradeBand"] = "3-5";
   const [generationState, setGenerationState] = useState<"idle" | "loading" | "error">("idle");
   const [generationMessage, setGenerationMessage] = useState("");
+  const [generationSources, setGenerationSources] = useState<SourceCredit[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [answers, setAnswers] = useState<number[]>([]);
@@ -111,15 +111,14 @@ export default function HomePage() {
     setSelectedBook(book);
     setGeneratedQuiz(null);
     setApproved(false);
-    setGenerationState("idle");
+    setGenerationState("loading");
     setGenerationMessage("");
-    setSourceText("");
+    setGenerationSources([]);
     goTo("create");
+    void generateQuiz(book, process.env.NODE_ENV !== "production");
   }
 
-  async function generateQuiz(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedBook) return;
+  async function generateQuiz(book: DisplayBook, testDraft: boolean) {
     setGenerationState("loading");
     setGenerationMessage("");
     try {
@@ -127,13 +126,13 @@ export default function HomePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          book: { title: selectedBook.title, author: selectedBook.author, isbn13: selectedBook.isbn13 },
+          book: { title: book.title, author: book.author, isbn13: book.isbn13 },
           gradeBand,
-          sourceText,
           testDraft,
         }),
       });
-      const payload = await response.json() as { quiz?: Quiz; error?: string };
+      const payload = await response.json() as { quiz?: Quiz; error?: string; sources?: SourceCredit[] };
+      setGenerationSources(payload.sources ?? []);
       if (!response.ok || !payload.quiz) throw new Error(payload.error ?? "Quiz generation failed.");
       setGeneratedQuiz(payload.quiz);
       setGenerationState("idle");
@@ -170,15 +169,10 @@ export default function HomePage() {
 
       {screen === "create" && selectedBook && <section className="screen create-shell" aria-labelledby="create-title">
         <button className="back-link" onClick={() => goTo("books")}>← Back to books</button>
-        <div className="create-heading"><div><span className="eyebrow"><ShieldCheck /> Adult workspace</span><h1 id="create-title">Create a quiz draft</h1><p>Paste notes that explain the complete story. PageQuest will not rely on catalog details or its own memory of the book.</p></div><div className="selected-book-chip"><strong>{selectedBook.title}</strong><span>{selectedBook.author}</span></div></div>
-        <form className="source-form" onSubmit={generateQuiz}>
-          <label><span>Reading range</span><select value={gradeBand} onChange={(event) => setGradeBand(event.target.value as Quiz["gradeBand"])}><option value="1-2">Grades 1–2</option><option value="3-5">Grades 3–5</option><option value="6-8">Grades 6–8</option></select></label>
-          <label><span>Teacher or parent notes</span><small>Include characters, setting, major events in order, causes and effects, and the ending. Minimum 600 characters.</small><textarea value={sourceText} onChange={(event) => setSourceText(event.target.value)} rows={14} maxLength={20000} placeholder="Paragraph 1: Introduce the characters and setting…\n\nParagraph 2: Explain the first major event…" /></label>
-          <div className="source-meter"><span>{sourceText.length.toLocaleString()} / 20,000 characters</span><strong className={sourceText.length >= 600 ? "ready" : ""}>{sourceText.length >= 600 ? "Ready to generate" : `${600 - sourceText.length} more needed`}</strong></div>
-          {process.env.NODE_ENV !== "production" && <label className="test-toggle"><input type="checkbox" checked={testDraft} onChange={(event) => setTestDraft(event.target.checked)} /><span><strong>Test this draft without approval</strong><small>Local development only. This option cannot run in production.</small></span></label>}
-          {generationMessage && <p className="search-message error" role="alert">{generationMessage}</p>}
-          <div className="generation-actions"><Button type="button" variant="outline" onClick={() => goTo("books")}>Cancel</Button><Button type="submit" size="lg" disabled={sourceText.trim().length < 600 || generationState === "loading"}>{generationState === "loading" ? <><LoaderCircle className="spin" /> Building 10 questions…</> : testDraft ? "Generate and test draft" : "Generate for adult review"}</Button></div>
-        </form>
+        <div className="create-heading"><div><span className="eyebrow"><Sparkles /> Automatic quiz builder</span><h1 id="create-title">PageQuest is building the quiz.</h1><p>It is finding usable story sources, checking whether they contain enough evidence, and creating ten questions without asking you to write notes.</p></div><div className="selected-book-chip"><strong>{selectedBook.title}</strong><span>{selectedBook.author}</span></div></div>
+        <div className="auto-generation-card" aria-live="polite">
+          {generationState === "loading" ? <><LoaderCircle className="spin auto-generation-icon" /><h2>Finding trustworthy story information…</h2><p>This can take several seconds. PageQuest will refuse to invent questions when the available sources are too thin.</p><ol><li className="active">Check public reference sources</li><li>Evaluate story coverage</li><li>Build and validate 10 questions</li></ol></> : <><BookOpen className="auto-generation-icon error-icon" /><h2>We couldn’t create a reliable quiz.</h2><p className="search-message error" role="alert">{generationMessage}</p>{generationSources.length > 0 && <SourceCredits sources={generationSources} />}<div className="generation-actions"><Button variant="outline" onClick={() => goTo("books")}>Choose another book</Button><Button onClick={() => generateQuiz(selectedBook, process.env.NODE_ENV !== "production")}>Try again</Button></div></>}
+        </div>
       </section>}
 
       {screen === "quiz" && question && <section className="screen quiz-shell" aria-labelledby="question-title">
@@ -199,7 +193,7 @@ export default function HomePage() {
 
       {screen === "adult" && <section className="screen" aria-labelledby="review-title">
         <div className="adult-heading"><div><h1 id="review-title">Adult review</h1><p>{generatedQuiz ? "Check every answer against your notes before students can use this quiz." : "Generated drafts stay private until an adult approves them."}</p></div><div className="review-actions">{generatedQuiz && <Button variant="outline" onClick={() => goTo("create")}>Revise source</Button>}<Button onClick={() => setApproved(true)} disabled={approved}>{approved ? "Quiz approved" : "Approve quiz"}</Button></div></div>
-        <div className="adult-grid"><article className="review-card"><div className="review-book">{generatedQuiz ? <span className="review-cover"><BookOpen /></span> : <Image src="/assets/moonlit-map-cover.webp" width={82} height={110} alt="The Moonlit Map cover" />}<div><span className={`status-pill ${approved ? "approved" : ""}`}>{approved ? "Approved" : "Needs review"}</span><h2>{activeBookTitle}</h2><p>Grades {(generatedQuiz?.gradeBand ?? "3-5").replace("-", "–")} · Version {generatedQuiz?.version ?? 1} · {activeQuestions.length} questions</p></div></div>{activeQuestions.map((item, index) => <div className="review-question" key={item.id}><header><h3>{index + 1}. {item.prompt}</h3><span>{Math.round(item.confidence * 100)}% source match</span></header><p><strong>Correct answer:</strong> {item.choices[item.correctIndex]}</p><p><strong>Evidence:</strong> {item.sourceReference} · {item.rationale}</p></div>)}</article><aside className="quality-card"><div className="confidence"><span>Average source confidence</span><strong>{Math.round(activeQuestions.reduce((sum, item) => sum + item.confidence, 0) / activeQuestions.length * 100)}%</strong><small>Adult-provided notes</small></div><h2>Approval checklist</h2><ul><li>Every answer matches the notes</li><li>No copied book passages</li><li>Language fits the selected grade</li><li>Distractors are clearly incorrect</li><li>No confusing or duplicate items</li></ul><Button className="full-button" onClick={startQuiz} disabled={generatedQuiz ? !approved : false}>{generatedQuiz && !approved ? "Approve before student use" : "Preview as student"}</Button></aside></div>
+        <div className="adult-grid"><article className="review-card"><div className="review-book">{generatedQuiz ? <span className="review-cover"><BookOpen /></span> : <Image src="/assets/moonlit-map-cover.webp" width={82} height={110} alt="The Moonlit Map cover" />}<div><span className={`status-pill ${approved ? "approved" : ""}`}>{approved ? "Approved" : "Needs review"}</span><h2>{activeBookTitle}</h2><p>Grades {(generatedQuiz?.gradeBand ?? "3-5").replace("-", "–")} · Version {generatedQuiz?.version ?? 1} · {activeQuestions.length} questions</p></div></div>{activeQuestions.map((item, index) => <div className="review-question" key={item.id}><header><h3>{index + 1}. {item.prompt}</h3><span>{Math.round(item.confidence * 100)}% source match</span></header><p><strong>Correct answer:</strong> {item.choices[item.correctIndex]}</p><p><strong>Evidence:</strong> {item.sourceReference} · {item.rationale}</p></div>)}</article><aside className="quality-card"><div className="confidence"><span>Average source confidence</span><strong>{Math.round(activeQuestions.reduce((sum, item) => sum + item.confidence, 0) / activeQuestions.length * 100)}%</strong><small>Automatically retrieved sources</small></div>{generationSources.length > 0 && <SourceCredits sources={generationSources} />}<h2>Approval checklist</h2><ul><li>Every answer matches a cited source</li><li>No copied book passages</li><li>Language fits the selected grade</li><li>Distractors are clearly incorrect</li><li>No confusing or duplicate items</li></ul><Button className="full-button" onClick={startQuiz} disabled={generatedQuiz ? !approved : false}>{generatedQuiz && !approved ? "Approve before student use" : "Preview as student"}</Button></aside></div>
       </section>}
     </main>
     <nav className="mobile-nav" aria-label="Mobile navigation">{navigation.map((item) => { const Icon = item.icon; return <button key={item.id} className={screen === item.id ? "active" : ""} onClick={() => goTo(item.id)}><Icon /><span>{item.label.replace("Find a ", "")}</span></button>; })}</nav>
@@ -211,3 +205,4 @@ function BookRow({ book, onOpen }: { book: DisplayBook; onOpen?: () => void }) {
 function BookTile({ book, onOpen, onCreate }: { book: DisplayBook; onOpen?: () => void; onCreate?: () => void }) { return <article className="book-tile"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Quiz not created"}</span><h2>{book.title}</h2><p>{book.author}{book.publishedYear ? ` · ${book.publishedYear}` : ""}</p><small>{book.isbn13 ? `ISBN ${book.isbn13}` : book.source === "open_library" ? "Open Library record" : book.source === "google_books" ? "Google Books record" : book.genre}</small><Button variant={onOpen ? "default" : "outline"} className="full-button" onClick={onOpen ?? onCreate}>{onOpen ? "Start quiz" : "Create quiz draft"}</Button></article>; }
 function Stat({ label, value }: { label: string; value: string }) { return <div className="stat-card"><span>{label}</span><strong>{value}</strong></div>; }
 function Skill({ label, value }: { label: string; value: number }) { return <div className="skill-row"><strong>{label}</strong><Progress value={value} /><b>{value}%</b></div>; }
+function SourceCredits({ sources }: { sources: SourceCredit[] }) { return <section className="source-credits"><h3>Sources checked</h3>{sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer"><strong>{source.name}</strong><span>{source.licenseNote}</span></a>)}</section>; }
