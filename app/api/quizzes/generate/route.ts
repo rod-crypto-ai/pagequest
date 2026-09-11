@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generationRequestSchema, generatedQuizOutputSchema, quizOutputJsonSchema, extractResponseText } from "@/lib/quiz-generation";
 import { quizSchema } from "@/lib/validation/quiz";
-import { formatAutomaticSources, parseGoogleBooksSource, parseOpenLibrarySource, parseWikipediaSource, type AutomaticSource } from "@/lib/automatic-sources";
+import { formatAutomaticSources, parseGoogleBooksSource, parseGutendexSource, parseOpenLibrarySource, parseWikipediaSource, type AutomaticSource } from "@/lib/automatic-sources";
 
 export const runtime = "edge";
 
@@ -33,8 +33,13 @@ async function findAutomaticSources(book: { title: string; author: string; isbn1
   wikipediaUrl.searchParams.set("explaintext", "1");
   wikipediaUrl.searchParams.set("inprop", "url");
   wikipediaUrl.searchParams.set("format", "json");
+  const gutendexUrl = new URL("/books", process.env.GUTENDEX_BASE_URL || "https://gutendex.com");
+  gutendexUrl.searchParams.set("search", `${book.title} ${book.author}`);
+  gutendexUrl.searchParams.set("languages", "en");
+  gutendexUrl.searchParams.set("copyright", "false");
 
-  const [openResult, googleResult, wikipediaResult] = await Promise.allSettled([
+  const [gutendexResult, openResult, googleResult, wikipediaResult] = await Promise.allSettled([
+    fetchJson(gutendexUrl).then((payload) => parseGutendexSource(payload, book.title, book.author)),
     fetchJson(openSearchUrl).then(async (searchPayload) => {
       const key = (searchPayload as { docs?: Array<{ key?: string }> }).docs?.[0]?.key;
       if (!key?.startsWith("/works/")) return null;
@@ -44,7 +49,7 @@ async function findAutomaticSources(book: { title: string; author: string; isbn1
     fetchJson(googleUrl).then(parseGoogleBooksSource),
     fetchJson(wikipediaUrl).then((payload) => parseWikipediaSource(payload, book.title)),
   ]);
-  return [openResult, googleResult, wikipediaResult]
+  return [gutendexResult, openResult, googleResult, wikipediaResult]
     .filter((result): result is PromiseFulfilledResult<AutomaticSource | null> => result.status === "fulfilled")
     .map((result) => result.value)
     .filter((source): source is AutomaticSource => source !== null);

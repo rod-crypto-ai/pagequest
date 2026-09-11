@@ -14,7 +14,7 @@ PageQuest is a visual reading-comprehension product for students in grades 1–8
 - Live title, author, and ISBN search across Open Library and Google Books
 - Provider fallback, result deduplication, loading, empty, and error states
 - Normalized covers, authors, publication years, subjects, and stable identifiers
-- Ten-question drafts generated from automatically retrieved Open Library, Google Books, and Wikipedia reference material
+- Ten-question drafts generated from automatically retrieved Project Gutenberg, Open Library, Google Books, and Wikipedia reference material
 - Strict structured-output validation and source-sufficiency rejection
 - Automatic refusal when trustworthy source coverage is insufficient
 - Adult approval gate plus an automatic local-development test path
@@ -52,6 +52,14 @@ cp .env.example .env.local
 ```
 
 Then set `GOOGLE_BOOKS_API_KEY` in `.env.local`. Never expose that key in browser code.
+
+Public-domain books can also use catalog summaries from Gutendex. PageQuest uses the public endpoint by default in local and production environments. For sustained production traffic, run a Gutendex instance and provide its base URL as recommended by the project:
+
+```bash
+GUTENDEX_BASE_URL=https://gutendex.example.com
+```
+
+There is no legitimate general-purpose API that exposes the full text of most copyrighted books. PageQuest therefore uses Google Books and Open Library for broad book identification, adds public-domain catalog material when available, and refuses to generate a quiz when the lawful sources are too thin. Production coverage for newer copyrighted books will require licensed publisher, library, or study-guide content.
 
 ## Local quiz generation
 
