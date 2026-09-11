@@ -2,13 +2,26 @@
 
 import { useMemo, useState } from "react";
 import Image from "next/image";
-import { Accessibility, BarChart3, BookOpen, ChevronRight, Home, Search, ShieldCheck, Sparkles, Volume2 } from "lucide-react";
+import { Accessibility, BarChart3, BookOpen, ChevronRight, Home, LoaderCircle, Search, ShieldCheck, Sparkles, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { calculatePoints } from "@/lib/scoring.mjs";
 import { demoBooks, demoQuestions } from "@/lib/demo-data";
+import type { BookSearchResult } from "@/lib/books";
 
 type Screen = "home" | "books" | "quiz" | "results" | "adult";
+type DisplayBook = {
+  id: string;
+  title: string;
+  author: string;
+  isbn13: string | null;
+  genre: string;
+  gradeBand: string;
+  cover: string;
+  quizReady: boolean;
+  source?: BookSearchResult["source"];
+  publishedYear?: number | null;
+};
 const navigation: Array<{ id: Screen; label: string; icon: typeof Home }> = [
   { id: "home", label: "Home", icon: Home },
   { id: "books", label: "Find a book", icon: Search },
@@ -19,14 +32,18 @@ const navigation: Array<{ id: Screen; label: string; icon: typeof Home }> = [
 export default function HomePage() {
   const [screen, setScreen] = useState<Screen>("home");
   const [query, setQuery] = useState("");
+  const [liveBooks, setLiveBooks] = useState<DisplayBook[] | null>(null);
+  const [searchState, setSearchState] = useState<"idle" | "loading" | "error">("idle");
+  const [searchMessage, setSearchMessage] = useState("");
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [answers, setAnswers] = useState<number[]>([]);
   const [approved, setApproved] = useState(false);
-  const filteredBooks = useMemo(() => {
+  const filteredBooks = useMemo<DisplayBook[]>(() => {
+    if (liveBooks) return liveBooks;
     const value = query.trim().toLowerCase();
-    return value ? demoBooks.filter((book) => [book.title, book.author, book.isbn13, book.genre].join(" ").toLowerCase().includes(value)) : demoBooks;
-  }, [query]);
+    return value ? demoBooks.filter((book) => [book.title, book.author, book.isbn13, book.genre].join(" ").toLowerCase().includes(value)) : [...demoBooks];
+  }, [liveBooks, query]);
   const correctCount = answers.reduce((count, answer, index) => count + (answer === demoQuestions[index]?.correctIndex ? 1 : 0), 0);
   const scorePercent = Math.round((correctCount / demoQuestions.length) * 100);
   const earnedPoints = calculatePoints({ basePoints: 5, scorePercent, passingScore: 70 });
@@ -45,6 +62,41 @@ export default function HomePage() {
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(`${question.prompt}. ${question.choices.join(". ")}`));
   }
 
+  async function searchBooks(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = query.trim();
+    if (value.length < 2) {
+      setSearchState("error");
+      setSearchMessage("Enter at least two characters.");
+      return;
+    }
+    setSearchState("loading");
+    setSearchMessage("");
+    try {
+      const response = await fetch(`/api/books/search?q=${encodeURIComponent(value)}`);
+      const payload = await response.json() as { books?: BookSearchResult[]; error?: string; partial?: boolean };
+      if (!response.ok || !payload.books) throw new Error(payload.error ?? "Search failed.");
+      setLiveBooks(payload.books.map((book) => ({
+        id: book.id,
+        title: book.title,
+        author: book.authors.join(", ") || "Author unavailable",
+        isbn13: book.isbn13,
+        genre: book.subjects[0] ?? "General",
+        gradeBand: "To be reviewed",
+        cover: book.coverUrl ?? "fallback",
+        quizReady: false,
+        source: book.source,
+        publishedYear: book.publishedYear,
+      })));
+      setSearchMessage(payload.partial ? "Results loaded from one book provider; the other is temporarily unavailable." : "");
+      setSearchState("idle");
+    } catch (error) {
+      setLiveBooks([]);
+      setSearchState("error");
+      setSearchMessage(error instanceof Error ? error.message : "Book search is temporarily unavailable.");
+    }
+  }
+
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Main navigation">
       <button className="brand" onClick={() => goTo("home")}><span className="brand-mark"><BookOpen /></span><span>PageQuest</span></button>
@@ -61,10 +113,12 @@ export default function HomePage() {
       </section>}
 
       {screen === "books" && <section className="screen" aria-labelledby="book-search-title">
-        <div className="search-hero"><h1 id="book-search-title">Which book did you finish?</h1><p>Search by title, author, or ISBN. Reviewed quizzes appear first.</p><label className="search-box"><Search aria-hidden="true" /><span className="sr-only">Search books</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try “The Moonlit Map”" /></label></div>
-        <p className="result-count">{filteredBooks.length} {filteredBooks.length === 1 ? "book" : "books"} found</p>
-        <div className="catalog-grid">{filteredBooks.map((book) => <BookTile key={book.id} book={book} onOpen={book.quizReady ? startQuiz : undefined} />)}</div>
-        {filteredBooks.length === 0 && <div className="empty-state"><BookOpen /><h2>No books found</h2><p>Check the spelling or try an ISBN.</p></div>}
+        <div className="search-hero"><h1 id="book-search-title">Which book did you finish?</h1><p>Search real library catalogs by title, author, or ISBN.</p><form className="search-box" onSubmit={searchBooks}><Search aria-hidden="true" /><label className="sr-only" htmlFor="book-query">Search books</label><input id="book-query" value={query} onChange={(event) => { setQuery(event.target.value); if (liveBooks) setLiveBooks(null); }} placeholder="Try “Charlotte’s Web”" autoComplete="off" /><Button type="submit" disabled={searchState === "loading"}>{searchState === "loading" ? <><LoaderCircle className="spin" /> Searching</> : "Search"}</Button></form></div>
+        <div className="result-summary"><p className="result-count" aria-live="polite">{searchState === "loading" ? "Searching two trusted book catalogs…" : `${filteredBooks.length} ${filteredBooks.length === 1 ? "book" : "books"} found`}</p>{liveBooks && <button onClick={() => { setLiveBooks(null); setQuery(""); setSearchMessage(""); }}>Clear search</button>}</div>
+        {searchMessage && <p className={`search-message ${searchState === "error" ? "error" : ""}`} role={searchState === "error" ? "alert" : "status"}>{searchMessage}</p>}
+        {searchState === "loading" && <div className="search-loading" aria-hidden="true">{[1, 2, 3, 4].map((item) => <div className="book-skeleton" key={item}><span /><b /><i /></div>)}</div>}
+        {searchState !== "loading" && <div className="catalog-grid">{filteredBooks.map((book) => <BookTile key={book.id} book={book} onOpen={book.quizReady ? startQuiz : undefined} />)}</div>}
+        {searchState !== "loading" && filteredBooks.length === 0 && <div className="empty-state"><BookOpen /><h2>No books found</h2><p>Check the spelling, try the author’s name, or enter the ISBN.</p></div>}
       </section>}
 
       {screen === "quiz" && question && <section className="screen quiz-shell" aria-labelledby="question-title">
@@ -92,8 +146,8 @@ export default function HomePage() {
   </div>;
 }
 
-function BookArtwork({ cover, title }: { cover: string; title: string }) { return cover.startsWith("/") ? <Image src={cover} fill sizes="180px" alt={`${title} cover`} /> : <div className={`type-cover ${cover}`}>{title.split(" ").map((word) => <span key={word}>{word}</span>)}</div>; }
-function BookRow({ book, onOpen }: { book: (typeof demoBooks)[number]; onOpen?: () => void }) { return <article className="book-row"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Adult help needed"}</span><h3>{book.title}</h3><p>{book.genre} · Grades {book.gradeBand}</p>{onOpen && <button onClick={onOpen}>Start quiz <ChevronRight /></button>}</div></article>; }
-function BookTile({ book, onOpen }: { book: (typeof demoBooks)[number]; onOpen?: () => void }) { return <article className="book-tile"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Source needed"}</span><h2>{book.title}</h2><p>{book.author} · {book.genre}</p><Button variant={onOpen ? "default" : "outline"} className="full-button" onClick={onOpen}>{onOpen ? "Start quiz" : "Ask an adult"}</Button></article>; }
+function BookArtwork({ cover, title }: { cover: string; title: string }) { return cover.startsWith("/") ? <Image src={cover} fill sizes="180px" alt={`${title} cover`} /> : cover.startsWith("https://") ? <Image src={cover} fill sizes="(max-width: 700px) 45vw, 220px" alt={`${title} cover`} referrerPolicy="no-referrer" /> : <div className={`type-cover ${cover}`}>{title.split(" ").map((word, index) => <span key={`${word}-${index}`}>{word}</span>)}</div>; }
+function BookRow({ book, onOpen }: { book: DisplayBook; onOpen?: () => void }) { return <article className="book-row"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Adult help needed"}</span><h3>{book.title}</h3><p>{book.genre} · Grades {book.gradeBand}</p>{onOpen && <button onClick={onOpen}>Start quiz <ChevronRight /></button>}</div></article>; }
+function BookTile({ book, onOpen }: { book: DisplayBook; onOpen?: () => void }) { return <article className="book-tile"><div className="book-cover"><BookArtwork cover={book.cover} title={book.title} /></div><span className={`status-pill ${book.quizReady ? "approved" : ""}`}>{book.quizReady ? "Quiz ready" : "Quiz not created"}</span><h2>{book.title}</h2><p>{book.author}{book.publishedYear ? ` · ${book.publishedYear}` : ""}</p><small>{book.isbn13 ? `ISBN ${book.isbn13}` : book.source === "open_library" ? "Open Library record" : book.source === "google_books" ? "Google Books record" : book.genre}</small><Button variant={onOpen ? "default" : "outline"} className="full-button" onClick={onOpen}>{onOpen ? "Start quiz" : "Ask an adult"}</Button></article>; }
 function Stat({ label, value }: { label: string; value: string }) { return <div className="stat-card"><span>{label}</span><strong>{value}</strong></div>; }
 function Skill({ label, value }: { label: string; value: number }) { return <div className="skill-row"><strong>{label}</strong><Progress value={value} /><b>{value}%</b></div>; }
